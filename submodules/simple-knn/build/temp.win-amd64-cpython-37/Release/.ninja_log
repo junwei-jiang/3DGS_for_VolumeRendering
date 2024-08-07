@@ -1,0 +1,4 @@
+# ninja log v5
+0	15216	7446579790339934	C:/JunweiFiles/ProjectsFiles/3DGS/3dgs-accel/submodules/simple-knn/build/temp.win-amd64-cpython-37/Release/ext.obj	fdf7a812cbe89c05
+4	20537	7446579843569486	C:/JunweiFiles/ProjectsFiles/3DGS/3dgs-accel/submodules/simple-knn/build/temp.win-amd64-cpython-37/Release/simple_knn.obj	8ebbb8d8b2ed3cba
+9	41910	7446580057067881	C:/JunweiFiles/ProjectsFiles/3DGS/3dgs-accel/submodules/simple-knn/build/temp.win-amd64-cpython-37/Release/spatial.obj	26712cf657485fb6

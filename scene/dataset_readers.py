@@ -401,6 +401,47 @@ def readVolumeCameras(cam_extrinsics, cam_intrinsics, images_folder, return_cam_
     sys.stdout.write('\n')
     return cam_infos
 
+def readVolumeCameras2(cam_datas_file, images_folder, return_cam_mat:bool=False):
+    cam_infos = []
+
+    with open(cam_datas_file, 'r') as file:
+        cam_datas = json.load(file)
+
+    for idx, cam_data in enumerate(cam_datas):
+        sys.stdout.write('\r')
+        # the exact output you're looking for:
+        sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_datas)))
+        sys.stdout.flush()
+
+        uid = 0
+
+        c2w_matrix = np.array(cam_data['extrinsics']['c2w_matrix'])
+        width = cam_data['width']
+        height = cam_data['height']
+        fovx = cam_data['fovx']
+        fovy = cam_data['fovy']
+        img_id = cam_data['img_id']
+
+        R = c2w_matrix[:3, :3].transpose()  # Transpose of the upper left 3x3 matrix
+        T = c2w_matrix[:3, 3]
+
+        fovY_radians = math.radians(fovy)
+        fovX_radians = math.radians(fovx)
+
+        image_path = os.path.join(images_folder, str(img_id) + '.png')
+
+        image_name = str(img_id)
+        image = Image.open(image_path)
+
+        cam_info = CameraInfo(uid=img_id, R=R, T=T, FovY=fovY_radians, FovX=fovX_radians, image=image,
+                              image_path=image_path, image_name=image_name, width=width, height=height)
+
+        if idx==1:
+            print(cam_info)
+        cam_infos.append(cam_info)
+    sys.stdout.write('\n')
+    return cam_infos
+
 def readCustomDataInfo(path, eval, gaussian_num=(30,30,30), llffhold=8):
     """
     path: the source path, where the rendered images
@@ -448,8 +489,131 @@ def readCustomDataInfo(path, eval, gaussian_num=(30,30,30), llffhold=8):
                            ply_path=ply_path)
     return scene_info
 
+# def readCustomDataInfo2(path, eval, gaussian_num=(30,30,30), llffhold=8):
+#     """
+#     path: the source path, where the rendered images
+#     initial pcd and saved in ply file
+#     read camera info for each image
+#     """
+#     cameras_data_file = os.path.join(path, "cameras.json")
+#     reading_dir = "images"
+#     images_folder = os.path.join(path, reading_dir)
+#     ct_meta_dir = "meta"
+#     meta_folder = os.path.join(path, ct_meta_dir)
+#     metadata = readCTMeta(meta_folder)  # volume_shape = (256, 256, 161)
+#     volume_shape = metadata["Resolution"]
+#
+#     # for each image, generate CameraInfo List,
+#     cam_infos_unsorted = readVolumeCameras2(cameras_data_file, images_folder)
+#
+#     cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name)
+#
+#     if eval:
+#         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+#         test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+#     else:
+#         train_cam_infos = cam_infos
+#         test_cam_infos = []
+#
+#     nerf_normalization = getNerfppNorm(train_cam_infos)
+#
+#     ply_path = os.path.join(path, "points3D.ply")  # the path of the initial point cloud: grid gaussians
+#     pcd = initialCloudPcd(volume_shape, gaussian_num)
+#
+#     storePly(ply_path, pcd.points, pcd.colors)
+#     pcd = fetchPly(ply_path)  # ! intial point cloud from the SfM (80861 points) or initial grid pcd
+#     scene_info = SceneInfo(point_cloud=pcd,
+#                            train_cameras=train_cam_infos,
+#                            test_cameras=test_cam_infos,
+#                            nerf_normalization=nerf_normalization,
+#                            ply_path=ply_path)
+#     return scene_info
+
+def readCamerasFromTransforms2(path, transformsfile, white_background, extension=".png", t = 'train'):
+    cam_infos = []
+
+    with open(os.path.join(path, transformsfile)) as json_file:
+        cam_datas = json.load(json_file)
+
+
+        for idx, cam_data in enumerate(cam_datas):
+            if t=='train':
+                cam_name = os.path.join(path, "./train/image" + str(idx)+ extension)
+            else:
+                cam_name = os.path.join(path, "./test/image" + str(idx) + extension)
+
+            # NeRF 'transform_matrix' is a camera-to-world transform
+            c2w = np.array(cam_data["transform_matrix"])
+            # change from OpenGL/Blender camera axes (Y up, Z back) to COLMAP (Y down, Z forward)
+            c2w[:3, 1:3] *= -1
+
+            # get the world-to-camera transform and set R, T
+            w2c = np.linalg.inv(c2w)
+            R = np.transpose(w2c[:3, :3])  # R is stored transposed due to 'glm' in CUDA code
+            T = w2c[:3, 3]
+
+            image_path = os.path.join(path, cam_name)
+            image_name = Path(cam_name).stem
+            image = Image.open(image_path)
+
+            im_data = np.array(image.convert("RGBA"))
+
+            bg = np.array([1, 1, 1]) if white_background else np.array([0, 0, 0])
+
+            norm_data = im_data / 255.0
+            arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+            image = Image.fromarray(np.array(arr * 255.0, dtype=np.byte), "RGB")
+
+            fovx = cam_data["camera_angle_x"]
+            fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
+            FovY = fovy
+            FovX = fovx
+
+            cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                                        image_path=image_path, image_name=image_name, width=image.size[0],
+                                        height=image.size[1]))
+
+    return cam_infos
+
+def readCustomDataInfo2(path, white_background, eval, extension=".png"):
+    print("Reading Training Transforms")
+    train_cam_infos = readCamerasFromTransforms2(path, "transforms_train.json", white_background, extension, 'train')
+    print("Reading Test Transforms")
+    test_cam_infos = readCamerasFromTransforms2(path, "transforms_test.json", white_background, extension, 'test')
+
+    if not eval:
+        train_cam_infos.extend(test_cam_infos)
+        test_cam_infos = []
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    ply_path = os.path.join(path, "points3d.ply")
+    if not os.path.exists(ply_path):
+        # Since this data set has no colmap data, we start with random points
+        num_pts = 100_000
+        print(f"Generating random point cloud ({num_pts})...")
+
+        # We create random points inside the bounds of the synthetic Blender scenes
+        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+        shs = np.random.random((num_pts, 3)) / 255.0
+        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
+
+        storePly(ply_path, xyz, SH2RGB(shs) * 255)
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
+
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
-    "Custom": readCustomDataInfo
+    "Custom": readCustomDataInfo,
+    "Custom2": readCustomDataInfo2
 }
